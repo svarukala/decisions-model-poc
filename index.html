@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat or Cowork? | Jev</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.55; }
+    main { max-width: 1040px; margin: 0 auto; padding: 40px 24px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--cp-border); padding-bottom: 20px; }
+    .brand { font-weight: 700; letter-spacing: -.03em; font-size: 22px; }
+    .brand span { color: var(--cp-accent); }
+    .tag, .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+    .tag { color: var(--cp-accent); background: var(--cp-accent-soft); padding: 6px 12px; border-radius: 0.625rem; }
+    h1 { font-size: clamp(32px, 5vw, 48px); letter-spacing: -.045em; line-height: 1.1; margin: 36px 0 12px; }
+    h2 { margin: 8px 0 12px; font-size: 28px; letter-spacing: -.03em; }
+    p { margin: 0 0 16px; }
+    .intro { max-width: 650px; font-size: 18px; color: var(--cp-text-muted); margin-bottom: 28px; }
+    .grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 20px; align-items: start; }
+    .card { padding: 24px; background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 16px; }
+    label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    textarea { width: 100%; resize: vertical; min-height: 176px; padding: 14px; border: 1px solid var(--cp-border-strong); border-radius: 0.625rem; font: inherit; background: var(--cp-bg-elevated); color: var(--cp-text); }
+    textarea::placeholder { color: var(--cp-text-muted); }
+    textarea:focus-visible, button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 3px; }
+    #context { min-height: 96px; margin-top: 8px; }
+    .small { font-size: 12px; color: var(--cp-text-muted); }
+    .counter { text-align: right; margin: 4px 0 12px; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 20px; }
+    button { font: inherit; cursor: pointer; border-radius: 0.625rem; border: 1px solid var(--cp-border); padding: 8px 12px; color: var(--cp-text); background: var(--cp-surface-soft); }
+    .examples button { font-size: 12px; }
+    button:hover { border-color: var(--cp-accent); }
+    button:disabled { opacity: .55; cursor: wait; }
+    .primary { background: var(--cp-accent); color: var(--cp-accent-fg); border-color: var(--cp-accent); width: 100%; font-weight: 600; padding: 12px 16px; margin: 20px 0 12px; }
+    .primary:hover { background: var(--cp-accent-hover); }
+    details { font-size: 14px; }
+    summary { cursor: pointer; color: var(--cp-text-muted); }
+    .notice { border: 1px solid var(--cp-border); border-left: 3px solid var(--cp-warning); background: var(--cp-bg-elevated); padding: 12px 16px; border-radius: 0.625rem; margin: 0 0 20px; font-size: 14px; }
+    .error { border-left-color: var(--cp-danger); color: var(--cp-danger); margin-top: 16px; overflow-wrap: anywhere; }
+    .eyebrow { color: var(--cp-accent); }
+    .empty { padding: 28px 0; }
+    .empty h2 { font-size: 24px; }
+    .empty p, #explanation { color: var(--cp-text-muted); }
+    .mini { padding: 12px 0; border-top: 1px solid var(--cp-border); font-size: 14px; }
+    .mini strong { display: block; margin-bottom: 4px; }
+    .mini span { color: var(--cp-text-muted); }
+    .metric { margin: 16px 0; }
+    .metric-label { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 14px; }
+    progress { width: 100%; height: 8px; display: block; accent-color: var(--cp-accent); }
+    .metadata { border-top: 1px solid var(--cp-border); margin-top: 20px; padding-top: 16px; }
+    .signals { display: grid; gap: 8px; margin: 16px 0; font-size: 13px; color: var(--cp-text-muted); }
+    .signal { display: flex; justify-content: space-between; gap: 12px; }
+    a { color: var(--cp-link); }
+    code { font-family: Consolas, "Courier New", Courier, monospace; overflow-wrap: anywhere; }
+    footer { margin-top: 24px; font-size: 12px; color: var(--cp-text-muted); }
+    [hidden] { display: none !important; }
+    @media (max-width: 740px) { .grid { grid-template-columns: 1fr; } main { padding: 24px 16px; } .card { padding: 20px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><div class="brand">jev<span> / </span>copilot router</div><div class="tag">Real API · Local app</div></header>
+    <h1>The right place for your prompt.</h1>
+    <p class="intro">Chat for answers. Cowork for delegated work. Let Jev help you choose before starting a task.</p>
+    <div id="setup" class="notice" role="status" hidden></div>
+    <div class="grid">
+      <section class="card" aria-label="Prompt input">
+        <form id="form">
+          <label for="prompt">What would you like to do?</label>
+          <textarea id="prompt" maxlength="8000" required placeholder="Describe the outcome you want, not just the topic..." aria-describedby="privacy"></textarea>
+          <div class="small counter"><span id="count">0</span> / 8,000</div>
+          <div class="examples" aria-label="Example prompts">
+            <button type="button" data-example="Rewrite this sentence to sound friendly but professional: Please send the updated budget by Friday.">Rewrite a message</button>
+            <button type="button" data-example="Gather project updates from our shared files, update the project tracker, and email the finished status report to the team.">Run a workflow</button>
+            <button type="button" data-example="Yes, proceed with that.">Ambiguous follow-up</button>
+          </div>
+          <details>
+            <summary>Add previous conversation context</summary>
+            <label for="context" class="small">Optional · up to 3,000 characters</label>
+            <textarea id="context" maxlength="3000" placeholder="Relevant earlier messages or details about the intended outcome"></textarea>
+          </details>
+          <button id="submit" class="primary" type="submit">Ask Jev</button>
+          <p id="privacy" class="small">Clicking Ask Jev saves this prompt, optional context, and timestamp locally in <code>prompt-history.jsonl</code>, then sends the prompt and context to TypeSafe AI. Submissions are saved even if Jev fails. Use non-sensitive examples unless your organization approves this service.</p>
+          <div id="error" class="notice error" role="alert" hidden></div>
+        </form>
+      </section>
+      <section class="card" aria-label="Recommendation" aria-live="polite" aria-busy="false" id="result-card">
+        <div class="eyebrow">Your recommendation</div>
+        <div id="empty" class="empty">
+          <h2>Start with a prompt.</h2>
+          <p>One real Jev call. A recommendation, the model's probabilities, and a little more clarity.</p>
+          <div class="mini"><strong>Copilot Chat</strong><span>Questions, explanations, analysis, and drafts.</span></div>
+          <div class="mini"><strong>Copilot Cowork</strong><span>Delegated actions and coordinated workflows.</span></div>
+        </div>
+        <div id="result" hidden>
+          <h2 id="recommendation"></h2>
+          <p id="explanation"></p>
+          <div id="bars"></div>
+          <p class="small">Jev's probability distribution, not a guarantee of success.</p>
+          <details class="metadata">
+            <summary>Decision details</summary>
+            <div id="signals" class="signals"></div>
+            <p class="small">If signals are uncertain or conflict, the app asks for more context. Explanations are predefined templates, not generated by Jev.</p>
+          </details>
+          <p id="metadata" class="small metadata"></p>
+        </div>
+      </section>
+    </div>
+    <footer>
+      Assumes licensed, work-grounded Microsoft 365 Copilot Chat and enabled Cowork. This is a task-fit advisor, not a tenant capability or billing check. Some Chat agents are metered; Cowork consumes credits. No task is executed or transferred.
+      <p style="margin-top: 8px"><a href="https://docs.typesafe.ai/models" target="_blank" rel="noreferrer">Jev model details</a> · <span id="endpoint">api.typesafe.ai/v1/systemone</span></p>
+    </footer>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const labels = { chat: "Copilot Chat", cowork: "Copilot Cowork", unsure: "Need more context" };
+    let busy = false;
+    let revision = 0;
+    function invalidate() {
+      revision++;
+      $("count").textContent = $("prompt").value.length.toLocaleString();
+      $("result").hidden = true;
+      $("empty").hidden = false;
+      $("error").hidden = true;
+    }
+    $("prompt").addEventListener("input", invalidate);
+    $("context").addEventListener("input", invalidate);
+    document.querySelectorAll("[data-example]").forEach((button) => {
+      button.addEventListener("click", () => {
+        $("prompt").value = button.dataset.example;
+        $("context").value = "";
+        invalidate();
+        $("prompt").focus();
+      });
+    });
+    async function readResponse(response) {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Server returned HTTP ${response.status}.`);
+      return data;
+    }
+    function showError(error) {
+      $("error").textContent = error.message;
+      $("error").hidden = false;
+    }
+    async function checkStatus() {
+      try {
+        const status = await readResponse(await fetch("/api/status"));
+        $("setup").hidden = status.configured;
+        $("setup").textContent = status.configured ? "" : "Setup: copy .env.example to .env in this project and add TYPESAFE_API_KEY. Then click Ask Jev; no restart is needed. Get a key at console.typesafe.ai.";
+      } catch (error) {
+        $("setup").hidden = false;
+        $("setup").textContent = `Cannot read server configuration: ${error.message}`;
+      }
+    }
+    function render(data) {
+      $("recommendation").textContent = data.recommendation === "unsure" ? "A little more context?" : `Use ${labels[data.recommendation]}`;
+      $("explanation").textContent = data.explanation;
+      $("bars").replaceChildren();
+      for (const [key, probability] of Object.entries(data.probabilities)) {
+        const row = document.createElement("div");
+        row.className = "metric";
+        const title = document.createElement("div");
+        title.className = "metric-label";
+        const name = document.createElement("span");
+        name.textContent = labels[key];
+        const value = document.createElement("strong");
+        value.textContent = `${(probability * 100).toFixed(1)}%`;
+        title.append(name, value);
+        const bar = document.createElement("progress");
+        bar.max = 1;
+        bar.value = probability;
+        bar.setAttribute("aria-label", `${labels[key]} probability`);
+        row.append(title, bar);
+        $("bars").append(row);
+      }
+      $("signals").replaceChildren();
+      const details = [
+        ["Jev's top choice", labels[data.modelChoice]],
+        ["Provider confidence", data.confidence.toFixed(2)],
+        ["Execution requested", `${(data.signals.execution * 100).toFixed(1)}%`],
+        ["Essential context missing", `${(data.signals.missingContext * 100).toFixed(1)}%`],
+      ];
+      for (const [name, value] of details) {
+        const row = document.createElement("div");
+        row.className = "signal";
+        const label = document.createElement("span");
+        label.textContent = name;
+        const detail = document.createElement("strong");
+        detail.textContent = value;
+        row.append(label, detail);
+        $("signals").append(row);
+      }
+      $("metadata").textContent = `${data.model} · ${data.durationMs.toLocaleString()} ms` +
+        (data.usage ? ` · ${data.usage.inputTokens.toLocaleString()} input tokens` : "");
+      $("empty").hidden = true;
+      $("result").hidden = false;
+    }
+    $("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      if (!$("prompt").value.trim()) {
+        showError(new Error("Enter a prompt first."));
+        return;
+      }
+      busy = true;
+      const submittedRevision = revision;
+      $("submit").disabled = true;
+      $("submit").textContent = "Asking Jev...";
+      $("result-card").setAttribute("aria-busy", "true");
+      $("error").hidden = true;
+      $("result").hidden = true;
+      $("empty").hidden = false;
+      try {
+        const result = await readResponse(await fetch("/api/classify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: $("prompt").value, context: $("context").value }),
+        }));
+        if (revision === submittedRevision) render(result);
+      } catch (error) {
+        if (revision === submittedRevision) showError(error);
+      } finally {
+        busy = false;
+        $("submit").disabled = false;
+        $("submit").textContent = "Ask Jev";
+        $("result-card").setAttribute("aria-busy", "false");
+        await checkStatus();
+      }
+    });
+    checkStatus();
+  </script>
+</body>
+</html>

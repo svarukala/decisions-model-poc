@@ -1,0 +1,99 @@
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { AppError, classify, readConfig, validateInput, ENDPOINT } from "./router.mjs";
+import { savePrompt } from "./history.mjs";
+
+function send(res, status, payload, type = "application/json") {
+  res.writeHead(status, {
+    "Content-Type": `${type}; charset=utf-8`,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+  });
+  res.end(type === "application/json" ? JSON.stringify(payload) : payload);
+}
+
+async function readJson(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 65536) throw new AppError(413, "Request is too large.");
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new AppError(400, "Request must contain valid JSON.");
+    throw error;
+  }
+}
+
+export function createApp({ getConfig = readConfig, classifyPrompt = classify, recordPrompt = savePrompt } = {}) {
+  let inFlight = false;
+  let requests = [];
+  return createServer(async (req, res) => {
+    try {
+      const port = req.socket.localPort;
+      const allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+      if (!allowedHosts.includes(req.headers.host)) throw new AppError(403, "Only local access is allowed.");
+      const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
+      if (req.method === "GET" && pathname === "/") {
+        return send(res, 200, await readFile(new URL("index.html", import.meta.url), "utf8"), "text/html");
+      }
+      if (req.method === "GET" && pathname === "/api/status") {
+        const config = await getConfig();
+        return send(res, 200, { configured: Boolean(config.apiKey), model: config.model, endpoint: ENDPOINT });
+      }
+      if (req.method !== "POST" || pathname !== "/api/classify") throw new AppError(404, "Not found.");
+      if (
+        (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) ||
+        req.headers["sec-fetch-site"] === "cross-site"
+      ) {
+        throw new AppError(403, "Cross-site requests are not allowed.");
+      }
+      if (req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
+        throw new AppError(415, "Use application/json.");
+      }
+      const now = Date.now();
+      requests = requests.filter((time) => now - time < 60000);
+      if (inFlight || requests.length >= 30) {
+        throw new AppError(429, "Please wait. One request at a time and at most 30 requests per minute are allowed.");
+      }
+      // Reserve the slot before reading the body, so concurrent submissions cannot race.
+      inFlight = true;
+      requests.push(now);
+      try {
+        const input = validateInput(await readJson(req));
+        await recordPrompt(input);
+        const result = await classifyPrompt(input, await getConfig());
+        send(res, 200, result);
+      } finally {
+        inFlight = false;
+      }
+    } catch (error) {
+      if (!(error instanceof AppError)) console.error("Unexpected request failure:", error.name);
+      if (!res.headersSent && !res.destroyed) {
+        send(res, error instanceof AppError ? error.status : 500, {
+          error: error instanceof AppError ? error.message : "Unexpected server error. See the server console.",
+        });
+      }
+    }
+  });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const config = await readConfig();
+  if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
+    throw new Error("PORT must be an integer between 1 and 65535.");
+  }
+  const server = createApp();
+  server.requestTimeout = 30000;
+  server.headersTimeout = 10000;
+  server.listen(config.port, "127.0.0.1", () => {
+    console.log(`Jev router: http://127.0.0.1:${config.port}`);
+    console.log(config.apiKey ? "TypeSafe API key configured." : "Setup needed: copy .env.example to .env and add TYPESAFE_API_KEY.");
+  });
+}

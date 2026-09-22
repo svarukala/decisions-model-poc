@@ -1,0 +1,16 @@
+{
+  "name": "jev-copilot-router",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A local Chat-or-Cowork advisor using the real Jev API.",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test",
+    "smoke:live": "node scripts/smoke-live.mjs"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "0.5.7"
+  }
+}
