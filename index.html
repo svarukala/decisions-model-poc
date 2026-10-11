@@ -140,7 +140,7 @@
             <textarea id="context" maxlength="3000" placeholder="Relevant earlier messages or details about the intended outcome"></textarea>
           </details>
           <button id="submit" class="primary" type="submit">Ask Jev</button>
-          <p id="privacy" class="small">Clicking Ask Jev saves this prompt, optional context, and timestamp locally in <code>prompt-history.jsonl</code>, then sends the prompt and context to TypeSafe AI. Submissions are saved even if Jev fails. Use non-sensitive examples unless your organization approves this service.</p>
+          <p id="privacy" class="small">Clicking Ask Jev sends the prompt and context to TypeSafe AI. This app stores only a total submission count, not prompts, context, responses, or user identifiers. Valid submissions count even if Jev fails. Use non-sensitive examples unless your organization approves this service.</p>
           <div id="error" class="notice error" role="alert" hidden></div>
         </form>
       </section>
@@ -167,6 +167,7 @@
       </section>
     </div>
     <footer>
+      <p id="usage-count" role="status">Total prompts submitted: loading...</p>
       Assumes licensed, work-grounded Microsoft 365 Copilot Chat and enabled Cowork. This is a task-fit advisor, not a tenant capability or billing check. Some Chat agents are metered; Cowork consumes credits. No task is executed or transferred.
       <p style="margin-top: 8px"><a href="https://docs.typesafe.ai/models" target="_blank" rel="noreferrer">Jev model details</a> · <span id="endpoint">api.typesafe.ai/v1/systemone</span></p>
     </footer>
@@ -205,9 +206,11 @@
     async function checkStatus() {
       try {
         const status = await readResponse(await fetch("/api/status"));
+        $("usage-count").textContent = `Total prompts submitted: ${status.totalSubmissions.toLocaleString()}`;
         $("setup").hidden = status.configured;
         $("setup").textContent = status.configured ? "" : "Setup: copy .env.example to .env in this project and add TYPESAFE_API_KEY. Then click Ask Jev; no restart is needed. Get a key at console.typesafe.ai.";
       } catch (error) {
+        $("usage-count").textContent = "Total prompts submitted: unavailable";
         $("setup").hidden = false;
         $("setup").textContent = `Cannot read server configuration: ${error.message}`;
       }

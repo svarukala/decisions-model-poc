@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { AppError, buildRequest, classify, interpretResponse, validateInput, DEFAULT_MODEL, ENDPOINT } from "../router.mjs";
+import { dirname, join } from "node:path";
+import { request } from "node:http";
+import { AppError, buildRequest, classify, interpretResponse, validateInput, parsePublicOrigin, DEFAULT_MODEL, ENDPOINT } from "../router.mjs";
 import { createApp } from "../server.mjs";
-import { savePrompt } from "../history.mjs";
+import { createUsageStore } from "../usage.mjs";
 
 function fixture(choice = "chat") {
   return {
@@ -110,8 +111,45 @@ test("provider authentication, throttling and server errors are explicit and not
   }
 });
 
+test("payment-required responses explain credits and billing without leaking provider details or retrying", async () => {
+  for (const body of [null, "Payment Required", { detail: "Private account billing details" }]) {
+    let calls = 0;
+    await assert.rejects(classify({ prompt: "hello" }, { apiKey: "synthetic-test-key", model: DEFAULT_MODEL }, {
+      fetch: async () => {
+        calls++;
+        return typeof body === "object"
+          ? Response.json(body, { status: 402 })
+          : new Response(body, { status: 402 });
+      },
+    }), (error) => {
+      assert.equal(error.status, 402);
+      assert.match(error.message, /insufficient credits or needs billing attention/);
+      assert.match(error.message, /app owner/);
+      assert.match(error.message, /https:\/\/console\.typesafe\.ai/);
+      assert.doesNotMatch(error.message, /Private account|synthetic-test-key|Wait before trying/);
+      return true;
+    });
+    assert.equal(calls, 1);
+  }
+});
+
+test("temporary rate limits are not described as exhausted credits", async () => {
+  await assert.rejects(classify({ prompt: "hello" }, { apiKey: "synthetic-test-key", model: DEFAULT_MODEL }, {
+    fetch: async () => Response.json({ detail: "Too many requests" }, { status: 429 }),
+  }), (error) => {
+    assert.equal(error.status, 429);
+    assert.match(error.message, /rate limit/);
+    assert.doesNotMatch(error.message, /credits|billing/);
+    return true;
+  });
+});
+
 async function withServer(t, overrides = {}) {
-  const server = createApp({ recordPrompt: async () => {}, ...overrides });
+  const server = createApp({
+    getConfig: async () => ({ apiKey: "", model: DEFAULT_MODEL, publicOrigin: "" }),
+    usage: overrides.usage ?? createUsageStore(":memory:"),
+    ...overrides,
+  });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
@@ -127,15 +165,38 @@ test("HTTP serves UI and status without exposing configuration secrets", async (
   assert.match(await page.text(), /Ask Jev/);
   const status = await (await fetch(`${url}/api/status`)).text();
   assert.equal(JSON.parse(status).configured, true);
+  assert.equal(JSON.parse(status).totalSubmissions, 0);
   assert.ok(!status.includes("do-not-expose"));
   assert.equal((await fetch(`${url}/.env`)).status, 404);
 });
 
+test("HTTP forwards the billing message through the UI's error response contract", async (t) => {
+  const url = await withServer(t, {
+    getConfig: async () => ({ apiKey: "synthetic-test-key", model: DEFAULT_MODEL }),
+    classifyPrompt: (input, config) => classify(input, config, {
+      fetch: async () => Response.json({ detail: "Private account details" }, { status: 402 }),
+    }),
+  });
+  const response = await fetch(`${url}/api/classify`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: '{"prompt":"Rewrite a sentence."}',
+  });
+  assert.equal(response.status, 402);
+  const body = await response.json();
+  assert.match(body.error, /insufficient credits/);
+  assert.doesNotMatch(body.error, /Private account/);
+  assert.equal(body.recommendation, undefined);
+});
+
 test("HTTP rejects cross-site calls, malformed JSON, and invalid input", async (t) => {
-  const recorded = [];
+  let count = 0;
   const url = await withServer(t, {
     getConfig: async () => ({ apiKey: "", model: DEFAULT_MODEL }),
-    recordPrompt: async (input) => recorded.push(input),
+    usage: {
+      increment: (...args) => { assert.equal(args.length, 0); count++; },
+      total: () => count,
+      close() {},
+    },
   });
   const post = (body, extra = {}) => fetch(`${url}/api/classify`, {
     method: "POST", headers: { "content-type": "application/json", ...extra }, body,
@@ -145,7 +206,7 @@ test("HTTP rejects cross-site calls, malformed JSON, and invalid input", async (
   assert.equal((await post('{"prompt":" "}')).status, 400);
   assert.equal((await post('{"prompt":"hello"}')).status, 503);
   assert.equal((await post("x".repeat(65537))).status, 413);
-  assert.deepEqual(recorded, [{ prompt: "hello", context: "" }]);
+  assert.equal(count, 1);
 });
 
 test("HTTP returns classification and guards simultaneous requests", async (t) => {
@@ -168,36 +229,23 @@ test("HTTP returns classification and guards simultaneous requests", async (t) =
   assert.equal((await post()).status, 429);
   complete();
   assert.equal((await (await first).json()).recommendation, "chat");
+  assert.equal((await (await fetch(`${url}/api/status`)).json()).totalSubmissions, 1);
 });
 
-async function historyFile(t) {
-  const directory = await mkdtemp(join(tmpdir(), "jev-history-test-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  return join(directory, "prompt-history.jsonl");
+async function usageFile() {
+  const directory = await mkdtemp(join(tmpdir(), "jev-usage-http-test-"));
+  return join(directory, "usage.sqlite");
 }
 
-test("history appends valid JSON lines, preserves multiline content, and excludes extra fields", async (t) => {
-  const file = await historyFile(t);
-  await savePrompt({ prompt: 'First line\n"Second line"', context: "Prior\ncontext", apiKey: "not-for-history" }, file);
-  await savePrompt({ prompt: "Another prompt", context: "" }, file);
-  const lines = (await readFile(file, "utf8")).trimEnd().split("\n");
-  assert.equal(lines.length, 2);
-  const entries = lines.map((line) => JSON.parse(line));
-  assert.equal(entries[0].prompt, 'First line\n"Second line"');
-  assert.equal(entries[0].context, "Prior\ncontext");
-  assert.equal(new Date(entries[0].timestamp).toISOString(), entries[0].timestamp);
-  assert.deepEqual(Object.keys(entries[0]), ["timestamp", "prompt", "context"]);
-  assert.equal(entries[1].prompt, "Another prompt");
-});
-
-test("HTTP persists prompts before both successful and failed classification across server instances", async (t) => {
-  const file = await historyFile(t);
+test("HTTP counts successful and failed submissions without storing their text", async (t) => {
+  const file = await usageFile();
   for (const succeeds of [true, false]) {
+    const usage = createUsageStore(file);
     const url = await withServer(t, {
       getConfig: async () => ({}),
-      recordPrompt: (input) => savePrompt(input, file),
-      classifyPrompt: async (input) => {
-        assert.ok((await readFile(file, "utf8")).includes(input.prompt));
+      usage,
+      classifyPrompt: async () => {
+        assert.equal(usage.total(), succeeds ? 1 : 2);
         if (!succeeds) throw new AppError(502, "Synthetic Jev failure.");
         return interpretResponse(fixture());
       },
@@ -208,21 +256,100 @@ test("HTTP persists prompts before both successful and failed classification acr
     });
     assert.equal(response.status, succeeds ? 200 : 502);
     assert.equal((await fetch(`${url}/prompt-history.jsonl`)).status, 404);
+    assert.equal((await fetch(`${url}/usage.sqlite`)).status, 404);
+    assert.equal((await (await fetch(`${url}/api/status`)).json()).totalSubmissions, succeeds ? 1 : 2);
   }
-  const entries = (await readFile(file, "utf8")).trimEnd().split("\n").map((line) => JSON.parse(line));
-  assert.deepEqual(entries.map((entry) => entry.prompt), ["Successful submission", "Failed submission"]);
+  const bytes = await readFile(file);
+  for (const text of ["Successful submission", "Failed submission", "Example context"]) {
+    assert.equal(bytes.includes(Buffer.from(text)), false);
+  }
+  t.after(() => rm(dirname(file), { recursive: true, force: true }));
 });
 
-test("history write failure is visible and prevents a Jev call", async (t) => {
-  const file = await historyFile(t);
+test("counter write failure is visible and prevents a Jev call", async (t) => {
   const url = await withServer(t, {
-    recordPrompt: (input) => savePrompt(input, join(file, "unavailable.jsonl")),
-    classifyPrompt: async () => assert.fail("Jev must not be called if history cannot be saved"),
+    usage: {
+      increment() { throw new AppError(503, "The submission counter is unavailable."); },
+      total: () => 0,
+      close() {},
+    },
+    classifyPrompt: async () => assert.fail("Jev must not be called if the count cannot be saved"),
   });
   const response = await fetch(`${url}/api/classify`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ prompt: "A valid prompt" }),
   });
-  assert.equal(response.status, 500);
-  assert.match((await response.json()).error, /Could not save prompt-history/);
+  assert.equal(response.status, 503);
+  assert.match((await response.json()).error, /counter is unavailable/);
+});
+
+test("public origin configuration accepts only exact HTTPS origins", () => {
+  assert.equal(parsePublicOrigin(""), "");
+  assert.equal(parsePublicOrigin("https://demo.trycloudflare.com/"), "https://demo.trycloudflare.com");
+  for (const origin of [
+    "not a URL", "http://demo.trycloudflare.com", "https://*.trycloudflare.com",
+    "https://user:password@demo.trycloudflare.com", "https://demo.trycloudflare.com/path",
+    "https://demo.trycloudflare.com?query=1", "https://demo.trycloudflare.com#fragment",
+  ]) {
+    assert.throws(() => parsePublicOrigin(origin), /PUBLIC_ORIGIN/);
+  }
+});
+
+// Node fetch rewrites Host, so use the HTTP client to reproduce proxy requests.
+function proxyRequest(url, { method = "GET", headers = {}, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = request(url, { method, headers }, (res) => {
+      const chunks = [];
+      res.on("data", (chunk) => chunks.push(chunk));
+      res.on("error", reject);
+      res.on("end", () => resolve(new Response(Buffer.concat(chunks), { status: res.statusCode })));
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+test("tunnel host is blocked by default, including spoofed forwarding headers", async (t) => {
+  const url = await withServer(t);
+  const response = await proxyRequest(url, {
+    headers: {
+      host: "demo.trycloudflare.com", "x-forwarded-host": "localhost",
+      "x-forwarded-proto": "https",
+    },
+  });
+  assert.equal(response.status, 403);
+});
+
+test("configured tunnel accepts HTTPS same-origin submissions but not other origins or private files", async (t) => {
+  const publicOrigin = "https://demo.trycloudflare.com";
+  let calls = 0;
+  const url = await withServer(t, {
+    getConfig: async () => ({ apiKey: "not-exposed", model: DEFAULT_MODEL, publicOrigin }),
+    classifyPrompt: async () => {
+      calls++;
+      return interpretResponse(fixture());
+    },
+  });
+  const headers = { host: "demo.trycloudflare.com" };
+  assert.equal((await proxyRequest(url, { headers })).status, 200);
+  assert.equal((await fetch(url)).status, 200);
+  const status = await proxyRequest(`${url}/api/status`, { headers });
+  assert.equal(status.status, 200);
+  assert.ok(!(await status.text()).includes("not-exposed"));
+  for (const path of ["/.env", "/prompt-history.jsonl", "/usage.sqlite", "/usage.sqlite-journal", "/router.mjs"]) {
+    assert.equal((await proxyRequest(`${url}${path}`, { headers })).status, 404);
+  }
+  const post = (origin, overrides = {}) => proxyRequest(`${url}/api/classify`, {
+    method: "POST",
+    headers: { ...headers, "content-type": "application/json", origin, ...overrides },
+    body: '{"prompt":"Rewrite a sentence."}',
+  });
+  assert.equal((await post(publicOrigin)).status, 200);
+  assert.equal((await post(publicOrigin, { "sec-fetch-site": "same-origin" })).status, 200);
+  for (const origin of ["https://other.trycloudflare.com", "http://demo.trycloudflare.com", url, "null"]) {
+    assert.equal((await post(origin)).status, 403);
+  }
+  assert.equal((await post(publicOrigin, { "sec-fetch-site": "cross-site" })).status, 403);
+  assert.equal((await proxyRequest(url, { headers: { host: "other.trycloudflare.com" } })).status, 403);
+  assert.equal(calls, 2);
 });

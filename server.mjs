@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { AppError, classify, readConfig, validateInput, ENDPOINT } from "./router.mjs";
-import { savePrompt } from "./history.mjs";
+import { createUsageStore } from "./usage.mjs";
 
 function send(res, status, payload, type = "application/json") {
   res.writeHead(status, {
@@ -31,25 +31,36 @@ async function readJson(req) {
   }
 }
 
-export function createApp({ getConfig = readConfig, classifyPrompt = classify, recordPrompt = savePrompt } = {}) {
+export function createApp({ getConfig = readConfig, classifyPrompt = classify, usage = createUsageStore() } = {}) {
   let inFlight = false;
   let requests = [];
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     try {
+      const config = await getConfig();
       const port = req.socket.localPort;
-      const allowedHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
-      if (!allowedHosts.includes(req.headers.host)) throw new AppError(403, "Only local access is allowed.");
-      const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
+      const allowedOrigins = new Map([
+        [`127.0.0.1:${port}`, `http://127.0.0.1:${port}`],
+        [`localhost:${port}`, `http://localhost:${port}`],
+      ]);
+      if (config.publicOrigin) {
+        allowedOrigins.set(new URL(config.publicOrigin).host, config.publicOrigin);
+      }
+      // Match the configured external origin, not untrusted forwarded headers.
+      const requestOrigin = allowedOrigins.get(req.headers.host);
+      if (!requestOrigin) throw new AppError(403, "Host is not allowed. Configure PUBLIC_ORIGIN for your exact HTTPS tunnel URL.");
+      const pathname = new URL(req.url, requestOrigin).pathname;
       if (req.method === "GET" && pathname === "/") {
         return send(res, 200, await readFile(new URL("index.html", import.meta.url), "utf8"), "text/html");
       }
       if (req.method === "GET" && pathname === "/api/status") {
-        const config = await getConfig();
-        return send(res, 200, { configured: Boolean(config.apiKey), model: config.model, endpoint: ENDPOINT });
+        return send(res, 200, {
+          configured: Boolean(config.apiKey), model: config.model,
+          endpoint: ENDPOINT, totalSubmissions: usage.total(),
+        });
       }
       if (req.method !== "POST" || pathname !== "/api/classify") throw new AppError(404, "Not found.");
       if (
-        (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) ||
+        (req.headers.origin && req.headers.origin !== requestOrigin) ||
         req.headers["sec-fetch-site"] === "cross-site"
       ) {
         throw new AppError(403, "Cross-site requests are not allowed.");
@@ -67,8 +78,8 @@ export function createApp({ getConfig = readConfig, classifyPrompt = classify, r
       requests.push(now);
       try {
         const input = validateInput(await readJson(req));
-        await recordPrompt(input);
-        const result = await classifyPrompt(input, await getConfig());
+        usage.increment();
+        const result = await classifyPrompt(input, config);
         send(res, 200, result);
       } finally {
         inFlight = false;
@@ -82,6 +93,8 @@ export function createApp({ getConfig = readConfig, classifyPrompt = classify, r
       }
     }
   });
+  server.on("close", () => usage.close());
+  return server;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -95,5 +108,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   server.listen(config.port, "127.0.0.1", () => {
     console.log(`Jev router: http://127.0.0.1:${config.port}`);
     console.log(config.apiKey ? "TypeSafe API key configured." : "Setup needed: copy .env.example to .env and add TYPESAFE_API_KEY.");
+    if (config.publicOrigin) {
+      console.warn(`Public access enabled without authentication: ${config.publicOrigin}. Visitors can consume Jev credits. Only an aggregate submission count is stored locally.`);
+    }
   });
 }

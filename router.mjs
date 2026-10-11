@@ -12,6 +12,24 @@ export class AppError extends Error {
   }
 }
 
+export function parsePublicOrigin(value) {
+  if (!value) return "";
+  let url;
+  try {
+    url = new URL(value);
+  } catch (error) {
+    if (error instanceof TypeError) throw new Error("PUBLIC_ORIGIN must be a valid HTTPS origin.");
+    throw error;
+  }
+  if (
+    url.protocol !== "https:" || url.username || url.password ||
+    url.pathname !== "/" || url.search || url.hash || url.hostname.includes("*")
+  ) {
+    throw new Error("PUBLIC_ORIGIN must be one exact HTTPS origin, without credentials, paths, queries, or wildcards.");
+  }
+  return url.origin;
+}
+
 export async function readConfig(env = process.env, file = new URL(".env", import.meta.url)) {
   let local = {};
   try {
@@ -23,6 +41,7 @@ export async function readConfig(env = process.env, file = new URL(".env", impor
     apiKey: (env.TYPESAFE_API_KEY || local.TYPESAFE_API_KEY || "").trim(),
     model: (env.TYPESAFE_MODEL || local.TYPESAFE_MODEL || DEFAULT_MODEL).trim(),
     port: Number(env.PORT || local.PORT || 3000),
+    publicOrigin: parsePublicOrigin((env.PUBLIC_ORIGIN ?? local.PUBLIC_ORIGIN ?? "").trim()),
   };
 }
 
@@ -149,6 +168,9 @@ export async function classify(input, config, options = {}) {
       throw new AppError(502, "Could not connect to Jev. Check your network connection and try again.");
     }
     if (error instanceof APIError) {
+      if (error.status === 402) {
+        throw new AppError(402, "Jev is unavailable: this app's TypeSafe account has insufficient credits or needs billing attention. Ask the app owner to add credits or resolve billing at https://console.typesafe.ai, then try again.");
+      }
       if (error.status === 401 || error.status === 403) {
         throw new AppError(502, "Jev rejected the API key or account access. Check your TypeSafe key and model access.");
       }

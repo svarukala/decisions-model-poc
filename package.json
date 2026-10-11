@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --test",
+    "migrate:history": "node scripts/migrate-history.mjs",
     "smoke:live": "node scripts/smoke-live.mjs"
   },
   "dependencies": {

@@ -4,3 +4,7 @@ node_modules/
 !.env.example
 *.log
 prompt-history.jsonl
+usage.sqlite
+usage.sqlite-journal
+usage.sqlite-wal
+usage.sqlite-shm
