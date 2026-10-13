@@ -42,6 +42,9 @@ export async function readConfig(env = process.env, file = new URL(".env", impor
     model: (env.TYPESAFE_MODEL || local.TYPESAFE_MODEL || DEFAULT_MODEL).trim(),
     port: Number(env.PORT || local.PORT || 3000),
     publicOrigin: parsePublicOrigin((env.PUBLIC_ORIGIN ?? local.PUBLIC_ORIGIN ?? "").trim()),
+    foundryEndpoint: (env.FOUNDRY_ENDPOINT || local.FOUNDRY_ENDPOINT || "").trim(),
+    decisionDeployment: (env.DECISION_DEPLOYMENT || local.DECISION_DEPLOYMENT || "").trim(),
+    foundryApiKey: (env.FOUNDRY_API_KEY || local.FOUNDRY_API_KEY || "").trim(),
   };
 }
 
@@ -145,6 +148,12 @@ export function interpretResponse(response) {
 
 export async function classify(input, config, options = {}) {
   const validated = validateInput(input);
+  const started = performance.now();
+  const response = await invokeJev(buildRequest(validated, config.model), config, options);
+  return { ...interpretResponse(response), durationMs: Math.round(performance.now() - started) };
+}
+
+export async function invokeJev(request, config, options = {}) {
   if (!config.apiKey) {
     throw new AppError(503, "Add TYPESAFE_API_KEY to the local .env file, then try again. The key stays on the server.");
   }
@@ -156,10 +165,9 @@ export async function classify(input, config, options = {}) {
     logLevel: "off",
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
-  const started = performance.now();
   let response;
   try {
-    response = await client.systemOne(buildRequest(validated, config.model));
+    response = await client.systemOne(request);
   } catch (error) {
     if (error instanceof APITimeoutError) {
       throw new AppError(504, "Jev timed out. No automatic retry was made; you can try again.");
@@ -179,5 +187,5 @@ export async function classify(input, config, options = {}) {
     }
     throw error;
   }
-  return { ...interpretResponse(response), durationMs: Math.round(performance.now() - started) };
+  return response;
 }

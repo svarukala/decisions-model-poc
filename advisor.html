@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Microsoft Agent Architecture Advisor</title>
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif; line-height: 1.55; }
+    main { max-width: 1160px; padding: 32px 24px; margin: auto; }
+    header { display: flex; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--cp-border); padding-bottom: 16px; }
+    a { color: var(--cp-link); }
+    h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.15; letter-spacing: -.04em; margin-bottom: 12px; }
+    h2 { font-size: 24px; line-height: 1.25; margin: 12px 0; }
+    h3 { font-size: 16px; margin: 0 0 8px; }
+    p { margin: 0 0 16px; }
+    .intro { color: var(--cp-text-muted); max-width: 800px; font-size: 18px; }
+    .card { padding: 24px; border: 1px solid var(--cp-border); border-radius: 16px; background: var(--cp-surface); }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 12px 0; }
+    label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 8px; }
+    textarea, select { width: 100%; background: var(--cp-bg-elevated); color: var(--cp-text); border: 1px solid var(--cp-border-strong); border-radius: 0.625rem; padding: 12px; font: inherit; }
+    textarea { min-height: 128px; resize: vertical; }
+    #context { min-height: 80px; }
+    button { border: 1px solid var(--cp-border); border-radius: 0.625rem; padding: 8px 12px; font: inherit; cursor: pointer; background: var(--cp-surface-soft); color: var(--cp-text); }
+    button:hover { border-color: var(--cp-accent); }
+    button:disabled { cursor: wait; opacity: .6; }
+    .primary { background: var(--cp-accent); border-color: var(--cp-accent); color: var(--cp-accent-fg); padding: 12px 24px; font-weight: 600; margin: 16px 0 12px; }
+    .primary:hover { background: var(--cp-accent-hover); }
+    :focus-visible { outline: 2px solid var(--cp-accent); outline-offset: 3px; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+    .examples button, .small { font-size: 12px; }
+    .muted, .small { color: var(--cp-text-muted); }
+    .eyebrow { color: var(--cp-accent); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .notice { border-left: 3px solid var(--cp-warning); padding: 12px 16px; background: var(--cp-bg-elevated); margin: 12px 0; border-radius: 0.625rem; overflow-wrap: anywhere; }
+    .error { color: var(--cp-danger); border-left-color: var(--cp-danger); }
+    #comparison { margin: 24px 0 16px; font-weight: 600; }
+    .probability { margin: 12px 0; }
+    .row { display: flex; justify-content: space-between; gap: 16px; font-size: 13px; }
+    progress { display: block; width: 100%; height: 8px; margin-top: 4px; accent-color: var(--cp-accent); }
+    details { margin-top: 16px; }
+    summary { cursor: pointer; font-size: 14px; }
+    .signals p { border-bottom: 1px solid var(--cp-border); padding: 8px 0; margin: 0; font-size: 13px; }
+    .metadata { border-top: 1px solid var(--cp-border); padding-top: 12px; margin-top: 16px; }
+    #catalog { margin: 16px 0; }
+    #catalog article { margin-bottom: 12px; }
+    footer { margin-top: 24px; }
+    [hidden] { display: none !important; }
+    @media (max-width: 760px) { .two, .fields { grid-template-columns: 1fr; } main { padding: 24px 16px; } header { flex-wrap: wrap; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header><strong>decisions / architecture advisor</strong><a href="/">Chat or Cowork demo</a></header>
+    <h1>What should you build it with?</h1>
+    <p class="intro">Describe the outcome. Compare Jev and Microsoft-Decision-1 on the simplest suitable Microsoft agent architecture, not just the biggest platform.</p>
+    <section class="card">
+      <form id="form">
+        <label for="prompt">Your use case or scenario</label>
+        <textarea id="prompt" maxlength="8000" required aria-describedby="privacy" placeholder="Who needs help, what should happen, and what does success look like?"></textarea>
+        <div class="examples">
+          <button type="button" data-example="Employees need an internal Microsoft 365 Copilot agent to answer questions from our HR SharePoint policies. We want a reusable no-code knowledge helper, not a separate application.">Internal knowledge agent</button>
+          <button type="button" data-example="Our account managers already use Copilot Cowork. Package our account-review methodology as reusable skills and connect Cowork to our CRM through MCP. We do not need a standalone agent.">Cowork skills + MCP</button>
+          <button type="button" data-example="Build a customer service agent on our public website for a bounded returns process. Makers need explicit topics, validation steps, and escalation paths using existing connectors.">Structured customer service</button>
+          <button type="button" data-example="Build a reusable low-code business agent that reconciles large files across systems, iterates on exceptions with subagents, and creates final reports. We want Copilot Studio to manage the runtime rather than owning code.">Adaptive business agent</button>
+          <button type="button" data-example="Our engineering team needs custom orchestration code and Python dependencies to coordinate agents using our own retrieval pipeline. We want to package our runtime for managed Azure hosting.">Custom-code runtime</button>
+          <button type="button" data-example="When a new expense record is added, check a fixed amount threshold, request manager approval, and update the status. No conversational interface or adaptive planning is needed.">Predictable automation</button>
+        </div>
+        <div class="fields">
+          <div><label for="builder">Who will build it? (optional)</label><select id="builder"><option value="">Not specified</option><option>Business user / no-code</option><option>Low-code maker / IT</option><option>Professional developer / AI engineer</option></select></div>
+          <div><label for="audience">Audience (optional)</label><select id="audience"><option value="">Not specified</option><option>Internal employees</option><option>External customers / public</option><option>Both internal and external users</option></select></div>
+          <div><label for="runtime">Runtime ownership (optional)</label><select id="runtime"><option value="">Not specified</option><option>Managed configuration; no custom orchestration code</option><option>Engineering owns orchestration code and dependencies</option></select></div>
+        </div>
+        <label for="context">Additional requirements (optional, 2,000 characters)</label>
+        <textarea id="context" maxlength="2000" placeholder="Channels, data sources, tool actions, model choice, governance, networking, budget, or required approvals"></textarea>
+        <button class="primary" id="submit">Compare both models</button>
+        <p id="privacy" class="small">Sends the same scenario and requirements to configured TypeSafe and Microsoft Foundry endpoints. Use non-sensitive examples. This app saves only an aggregate submission count, not scenario text, responses, or user identifiers. Each comparison can incur charges from both providers.</p>
+        <div id="error" class="notice error" role="alert" hidden></div>
+      </form>
+    </section>
+    <p id="comparison" role="status">Two independent decisions. One shared, documentation-backed rubric.</p>
+    <section class="two" id="results" aria-label="Model comparison" aria-live="polite" aria-busy="false">
+      <article class="card"><div class="eyebrow">TypeSafe</div><h2>Jev</h2><div id="jev"><p class="muted">Checking configuration...</p></div></article>
+      <article class="card"><div class="eyebrow">Microsoft Foundry</div><h2>Microsoft-Decision-1</h2><div id="decision"><p class="muted">Checking configuration...</p></div></article>
+    </section>
+    <details class="card" style="margin-top: 24px">
+      <summary>Explore the development options and sources</summary>
+      <div id="catalog"></div>
+    </details>
+    <footer class="small">
+      <p id="usage">Total submissions across both demos: loading...</p>
+      <p id="version"></p>
+      <p>Reference: <a href="https://microsoft.github.io/AgentPlatformAdvisor/" target="_blank" rel="noreferrer">Microsoft Agent Platform Advisor</a>. This demo uses model decisions, not that site's deterministic score matrix. Agent Builder is an authoring path, not a synonym for every declarative-agent capability.</p>
+      <p>Advice, not a deployment or licensing check. Verify tenant availability, permissions, region support and costs. Explanations are templates based on structured decisions, not model-generated reasoning. Probabilities and agreement are not accuracy guarantees. A single latency measurement is not a benchmark.</p>
+    </footer>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let catalog = {};
+    let signalLabels = {};
+    let revision = 0;
+    let busy = false;
+    let ready = false;
+    const names = { jev: "Jev", decision: "Microsoft-Decision-1" };
+    function node(tag, text, className) {
+      const item = document.createElement(tag);
+      if (text !== undefined) item.textContent = text;
+      if (className) item.className = className;
+      return item;
+    }
+    function resetResults() {
+      revision++;
+      $("error").hidden = true;
+      $("comparison").textContent = "Compare the updated scenario to see new recommendations.";
+      for (const provider of Object.keys(names)) $(provider).replaceChildren(node("p", "Ready for your scenario.", "muted"));
+    }
+    document.querySelectorAll("textarea, select").forEach((input) => input.addEventListener("input", resetResults));
+    document.querySelectorAll("[data-example]").forEach((button) => button.addEventListener("click", () => {
+      $("prompt").value = button.dataset.example;
+      for (const id of ["context", "builder", "audience", "runtime"]) $(id).value = "";
+      resetResults();
+      $("prompt").focus();
+    }));
+    async function readResponse(response) {
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+      return body;
+    }
+    async function loadStatus(showProviders = false) {
+      try {
+        const status = await readResponse(await fetch("/api/advisor/status"));
+        catalog = status.catalog;
+        signalLabels = status.signalLabels;
+        ready = true;
+        $("usage").textContent = `Total submissions across both demos: ${status.totalSubmissions.toLocaleString()}`;
+        $("version").textContent = `Capability rubric ${status.rubricVersion}`;
+        if (showProviders) {
+          for (const provider of Object.keys(names)) {
+            const entry = status.providers[provider];
+            $(provider).replaceChildren(node("p", entry.message, entry.configured ? "muted" : "notice"));
+          }
+        }
+        $("catalog").replaceChildren();
+        for (const entry of Object.values(catalog)) {
+          const article = node("article");
+          article.append(node("h3", entry.name), node("p", entry.criteria, "small"));
+          const link = node("a", "Microsoft documentation");
+          link.href = entry.source;
+          link.target = "_blank";
+          link.rel = "noreferrer";
+          article.append(link);
+          $("catalog").append(article);
+        }
+      } catch (error) {
+        $("usage").textContent = "Total submissions: unavailable";
+        $("error").textContent = `Could not load advisor configuration: ${error.message}`;
+        $("error").hidden = false;
+      }
+    }
+    function render(provider, result) {
+      const target = $(provider);
+      target.replaceChildren();
+      if (result.status === "error") {
+        target.append(node("p", result.error, "notice error"));
+        return;
+      }
+      const option = catalog[result.recommendation];
+      target.append(node("h2", option.name), node("p", result.explanation));
+      for (const reason of result.policyReasons) target.append(node("p", reason, "notice"));
+      target.append(node("p", option.prerequisites, "small"));
+      const link = node("a", "Read platform guidance");
+      link.href = option.source;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      target.append(link);
+      for (const component of result.supportingComponents) target.append(node("p", component, "notice"));
+      const ranking = node("details");
+      ranking.append(node("summary", "All options and probabilities"));
+      for (const item of result.ranking) {
+        const row = node("div", undefined, "probability");
+        const label = node("div", undefined, "row");
+        label.append(node("span", catalog[item.key].name), node("strong", `${(item.probability * 100).toFixed(1)}%`));
+        const bar = node("progress");
+        bar.max = 1; bar.value = item.probability;
+        bar.setAttribute("aria-label", `${catalog[item.key].name} probability`);
+        row.append(label, bar);
+        ranking.append(row);
+      }
+      target.append(ranking);
+      const details = node("details", undefined, "signals");
+      details.append(node("summary", "Capability signals and decision policy"));
+      details.append(node("p", `Raw model choice: ${catalog[result.modelChoice].name}`));
+      details.append(node("p", result.confidence === null ? "Provider confidence: not supplied" : `Provider confidence: ${result.confidence.toFixed(3)} (not directly comparable across providers)`));
+      for (const [key, value] of Object.entries(result.signals)) details.append(node("p", `${signalLabels[key]} ${(value * 100).toFixed(1)}%`));
+      details.append(node("p", "Demo policy abstains for weak or close probabilities, missing requirements, or conflicting custom-runtime / Cowork-extension signals. Thresholds are not validated accuracy guarantees."));
+      target.append(details);
+      target.append(node("p", `${result.model} | ${result.durationMs.toLocaleString()} ms` +
+        (result.usage ? ` | ${result.usage.inputTokens.toLocaleString()} input tokens` : " | Token usage not supplied"), "metadata small"));
+    }
+    $("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy) return;
+      if (!ready) { await loadStatus(true); if (!ready) return; }
+      if (!$("prompt").value.trim()) {
+        $("error").textContent = "Enter a scenario first.";
+        $("error").hidden = false;
+        return;
+      }
+      const submittedRevision = revision;
+      const context = [
+        $("context").value,
+        ...["builder", "audience", "runtime"].filter((id) => $(id).value).map((id) => `${id}: ${$(id).value}`),
+      ].filter(Boolean).join("\n");
+      busy = true;
+      $("submit").disabled = true;
+      $("submit").textContent = "Comparing...";
+      $("results").setAttribute("aria-busy", "true");
+      $("error").hidden = true;
+      $("comparison").textContent = "Sending the same scenario and rubric to both providers in parallel...";
+      for (const provider of Object.keys(names)) $(provider).replaceChildren(node("p", `Waiting for ${names[provider]}...`, "muted"));
+      try {
+        const result = await readResponse(await fetch("/api/advisor", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: $("prompt").value, context }),
+        }));
+        if (submittedRevision !== revision) return;
+        for (const provider of Object.keys(names)) render(provider, result.providers[provider]);
+        const messages = {
+          agree: "Both models recommend the same approach. Agreement is not a correctness guarantee.",
+          disagree: "The models recommend different approaches. Compare the requirements and alternatives before deciding.",
+          needs_clarification: "At least one decision needs clarification. Refine the scenario rather than forcing a winner.",
+          incomplete: "Comparison incomplete. One or both providers could not return a valid decision; see the individual cards.",
+        };
+        $("comparison").textContent = messages[result.comparison];
+      } catch (error) {
+        if (submittedRevision !== revision) return;
+        $("error").textContent = error.message;
+        $("error").hidden = false;
+        $("comparison").textContent = "Comparison could not be completed.";
+        for (const provider of Object.keys(names)) $(provider).replaceChildren(node("p", "No result available.", "muted"));
+      } finally {
+        busy = false;
+        $("submit").disabled = false;
+        $("submit").textContent = "Compare both models";
+        $("results").setAttribute("aria-busy", "false");
+        await loadStatus();
+      }
+    });
+    loadStatus(true);
+  </script>
+</body>
+</html>

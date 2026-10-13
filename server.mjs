@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { AppError, classify, readConfig, validateInput, ENDPOINT } from "./router.mjs";
 import { createUsageStore } from "./usage.mjs";
+import { advisorStatus, compareArchitectures } from "./advisor.mjs";
 
 function send(res, status, payload, type = "application/json") {
   res.writeHead(status, {
@@ -31,7 +32,7 @@ async function readJson(req) {
   }
 }
 
-export function createApp({ getConfig = readConfig, classifyPrompt = classify, usage = createUsageStore() } = {}) {
+export function createApp({ getConfig = readConfig, classifyPrompt = classify, compareScenario = compareArchitectures, usage = createUsageStore() } = {}) {
   let inFlight = false;
   let requests = [];
   const server = createServer(async (req, res) => {
@@ -52,13 +53,19 @@ export function createApp({ getConfig = readConfig, classifyPrompt = classify, u
       if (req.method === "GET" && pathname === "/") {
         return send(res, 200, await readFile(new URL("index.html", import.meta.url), "utf8"), "text/html");
       }
+      if (req.method === "GET" && (pathname === "/advisor" || pathname === "/advisor/")) {
+        return send(res, 200, await readFile(new URL("advisor.html", import.meta.url), "utf8"), "text/html");
+      }
+      if (req.method === "GET" && pathname === "/api/advisor/status") {
+        return send(res, 200, { ...advisorStatus(config), totalSubmissions: usage.total() });
+      }
       if (req.method === "GET" && pathname === "/api/status") {
         return send(res, 200, {
           configured: Boolean(config.apiKey), model: config.model,
           endpoint: ENDPOINT, totalSubmissions: usage.total(),
         });
       }
-      if (req.method !== "POST" || pathname !== "/api/classify") throw new AppError(404, "Not found.");
+      if (req.method !== "POST" || !["/api/classify", "/api/advisor"].includes(pathname)) throw new AppError(404, "Not found.");
       if (
         (req.headers.origin && req.headers.origin !== requestOrigin) ||
         req.headers["sec-fetch-site"] === "cross-site"
@@ -79,7 +86,7 @@ export function createApp({ getConfig = readConfig, classifyPrompt = classify, u
       try {
         const input = validateInput(await readJson(req));
         usage.increment();
-        const result = await classifyPrompt(input, config);
+        const result = await (pathname === "/api/advisor" ? compareScenario : classifyPrompt)(input, config);
         send(res, 200, result);
       } finally {
         inFlight = false;
@@ -109,7 +116,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     console.log(`Jev router: http://127.0.0.1:${config.port}`);
     console.log(config.apiKey ? "TypeSafe API key configured." : "Setup needed: copy .env.example to .env and add TYPESAFE_API_KEY.");
     if (config.publicOrigin) {
-      console.warn(`Public access enabled without authentication: ${config.publicOrigin}. Visitors can consume Jev credits. Only an aggregate submission count is stored locally.`);
+      console.warn(`Public access enabled without authentication: ${config.publicOrigin}. Visitors can consume Jev and Azure credits. Only an aggregate submission count is stored locally.`);
     }
   });
 }
