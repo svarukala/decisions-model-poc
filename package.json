@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node server.mjs",
     "start:mcp": "node mcp-server.mjs",
+    "start:web:cloud": "node web-server.mjs",
     "test": "node --test",
     "test:mcp:table": "node --test --test-name-pattern=\"real Table\"",
     "migrate:history": "node scripts/migrate-history.mjs",

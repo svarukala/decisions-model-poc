@@ -50,6 +50,9 @@ export function createApp({ getConfig = readConfig, classifyPrompt = classify, c
       const requestOrigin = allowedOrigins.get(req.headers.host);
       if (!requestOrigin) throw new AppError(403, "Host is not allowed. Configure PUBLIC_ORIGIN for your exact HTTPS tunnel URL.");
       const pathname = new URL(req.url, requestOrigin).pathname;
+      if (req.method === "GET" && pathname === "/healthz") {
+        return send(res, 200, { status: "ok" });
+      }
       if (req.method === "GET" && pathname === "/") {
         return send(res, 200, await readFile(new URL("index.html", import.meta.url), "utf8"), "text/html");
       }
@@ -57,12 +60,12 @@ export function createApp({ getConfig = readConfig, classifyPrompt = classify, c
         return send(res, 200, await readFile(new URL("advisor.html", import.meta.url), "utf8"), "text/html");
       }
       if (req.method === "GET" && pathname === "/api/advisor/status") {
-        return send(res, 200, { ...advisorStatus(config), totalSubmissions: usage.total() });
+        return send(res, 200, { ...advisorStatus(config), totalSubmissions: await usage.total() });
       }
       if (req.method === "GET" && pathname === "/api/status") {
         return send(res, 200, {
           configured: Boolean(config.apiKey), model: config.model,
-          endpoint: ENDPOINT, totalSubmissions: usage.total(),
+          endpoint: ENDPOINT, totalSubmissions: await usage.total(),
         });
       }
       if (req.method !== "POST" || !["/api/classify", "/api/advisor"].includes(pathname)) throw new AppError(404, "Not found.");
@@ -85,7 +88,7 @@ export function createApp({ getConfig = readConfig, classifyPrompt = classify, c
       requests.push(now);
       try {
         const input = validateInput(await readJson(req));
-        usage.increment();
+        await usage.increment();
         const result = await (pathname === "/api/advisor" ? compareScenario : classifyPrompt)(input, config);
         send(res, 200, result);
       } finally {

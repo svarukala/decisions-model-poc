@@ -5,8 +5,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { AppError, parsePublicOrigin, readConfig, readLocalEnv } from "./router.mjs";
 import { ADVISOR_REFERENCE, CATALOG, RUBRIC_VERSION, SIGNALS, advisorStatus, compareArchitectures } from "./advisor.mjs";
-import { createMcpUsage } from "./mcp-usage.mjs";
-import { authChallenge, createEntraAuthenticator, isGuid, protectedResourceMetadata, readEntraConfig } from "./mcp-auth.mjs";
+import { createMcpUsage, readTableConfig } from "./mcp-usage.mjs";
+import { authChallenge, createEntraAuthenticator, protectedResourceMetadata, readEntraConfig } from "./mcp-auth.mjs";
 
 function integer(value, fallback, maximum, label) {
   const parsed = Number(value ?? fallback);
@@ -21,26 +21,12 @@ export async function readMcpConfig(env = process.env, file) {
   const host = settings.MCP_HOST || "127.0.0.1";
   if (!["127.0.0.1", "0.0.0.0"].includes(host)) throw new AppError(503, "MCP_HOST must be 127.0.0.1 or 0.0.0.0.");
   if (host === "0.0.0.0" && !publicOrigin) throw new AppError(503, "Set MCP_PUBLIC_ORIGIN to the HTTPS gateway origin before binding MCP to all interfaces.");
-  let table;
-  try { table = new URL(settings.MCP_TABLE_ENDPOINT); } catch { throw new AppError(503, "Set MCP_TABLE_ENDPOINT to your Azure Storage Table HTTPS endpoint."); }
-  if (table.protocol !== "https:" || !/^[a-z0-9]{3,24}\.table\.core\.windows\.net$/.test(table.hostname) ||
-    table.port || table.pathname !== "/" || table.username || table.password || table.search || table.hash) {
-    throw new AppError(503, "MCP_TABLE_ENDPOINT must be https://ACCOUNT.table.core.windows.net without paths, keys or SAS tokens.");
-  }
-  const tableName = settings.MCP_TABLE_NAME || "AdvisorUsage";
-  if (!/^[A-Za-z][A-Za-z0-9]{2,62}$/.test(tableName)) throw new AppError(503, "MCP_TABLE_NAME must be 3-63 alphanumeric characters starting with a letter.");
-  const namespace = settings.MCP_TABLE_NAMESPACE || "architecture-advisor";
-  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(namespace)) throw new AppError(503, "MCP_TABLE_NAMESPACE must contain 1-64 letters, digits, underscores or hyphens.");
-  const tableCredential = settings.MCP_TABLE_CREDENTIAL || "default";
-  if (!["default", "managed-identity"].includes(tableCredential)) throw new AppError(503, "MCP_TABLE_CREDENTIAL must be default or managed-identity.");
-  const managedIdentityClientId = settings.MCP_TABLE_MANAGED_IDENTITY_CLIENT_ID?.trim() || "";
-  if (managedIdentityClientId && !isGuid(managedIdentityClientId)) throw new AppError(503, "MCP_TABLE_MANAGED_IDENTITY_CLIENT_ID must be a GUID.");
   return {
     host, publicOrigin, entra,
     port: integer(settings.MCP_PORT, 3002, 65535, "MCP_PORT"),
     maxConcurrent: integer(settings.MCP_MAX_CONCURRENT, 8, 128, "MCP_MAX_CONCURRENT"),
     rateLimit: integer(settings.MCP_RATE_LIMIT, 60, 100000, "MCP_RATE_LIMIT"),
-    tableEndpoint: table.origin, tableName, tableCredential, managedIdentityClientId, namespace,
+    ...readTableConfig(settings),
   };
 }
 

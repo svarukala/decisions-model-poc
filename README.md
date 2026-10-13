@@ -8,6 +8,14 @@ The second demo, **Microsoft Agent Architecture Advisor** at `/advisor`, compare
 real Jev and Microsoft-Decision-1 decisions for a development scenario.
 The original Chat/Cowork router remains at `/`.
 
+## Deploy to Azure
+
+[Repeatable Azure deployment and teardown](docs/azure.md) hosts both browser
+demos publicly and the MCP service behind Entra authentication. It uses
+scale-to-zero Container Apps and managed-identity Table Storage for persistent,
+separate web/MCP counts. The scripts reuse existing Jev and Decision-1 settings.
+Public browser visitors can consume provider credits.
+
 ## Shared MCP service
 
 The architecture advisor is also available as a **Microsoft Entra-authenticated,
@@ -19,7 +27,8 @@ using managed identity in Azure. Redis and shared MCP API keys are no longer use
 See [MCP setup, client configuration and scalable hosting](docs/mcp.md).
 Run `npm run start:mcp` after configuring your Entra API registration and Table Storage.
 The default MCP endpoint is `http://127.0.0.1:3002/mcp`; shared deployments
-require HTTPS ingress. MCP usage is separate from the web demo's SQLite count.
+require HTTPS ingress. MCP usage is separate from the web demo's count
+(SQLite locally, Table Storage in the Azure deployment).
 
 ## Run
 

@@ -6,6 +6,8 @@ It now requires **single-tenant Microsoft Entra v2 access tokens** and uses
 **Azure Storage Tables** for atomic shared admission and aggregate usage.
 There is no shared-client-key, Redis, anonymous-inference or in-memory fallback.
 The public web demo and its SQLite counter are unchanged.
+The optional [Azure deployment](azure.md) instead runs the public web demos
+with a separate Table counter; local `npm start` retains SQLite.
 
 This repository implements the server, not Azure provisioning. Live tenant
 sign-in, client consent, managed identity, RBAC, networking, and model access

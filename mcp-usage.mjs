@@ -2,10 +2,30 @@ import { TableClient } from "@azure/data-tables";
 import { DefaultAzureCredential, ManagedIdentityCredential } from "@azure/identity";
 import { setTimeout as sleep } from "node:timers/promises";
 import { AppError } from "./router.mjs";
+import { isGuid } from "./mcp-auth.mjs";
 
 export const TABLE_CLIENT_OPTIONS = { retryOptions: { maxRetries: 0 } };
 
 const storageErrorCode = (error) => error.details?.errorCode ?? error.code;
+
+export function readTableConfig(settings, prefix = "MCP") {
+  const value = (name) => settings[`${prefix}_${name}`];
+  let table;
+  try { table = new URL(value("TABLE_ENDPOINT")); } catch { throw new AppError(503, `Set ${prefix}_TABLE_ENDPOINT to your Azure Storage Table HTTPS endpoint.`); }
+  if (table.protocol !== "https:" || !/^[a-z0-9]{3,24}\.table\.core\.windows\.net$/.test(table.hostname) ||
+    table.port || table.pathname !== "/" || table.username || table.password || table.search || table.hash) {
+    throw new AppError(503, `${prefix}_TABLE_ENDPOINT must be https://ACCOUNT.table.core.windows.net without paths, keys or SAS tokens.`);
+  }
+  const tableName = value("TABLE_NAME") || "AdvisorUsage";
+  if (!/^[A-Za-z][A-Za-z0-9]{2,62}$/.test(tableName)) throw new AppError(503, `${prefix}_TABLE_NAME must be 3-63 alphanumeric characters starting with a letter.`);
+  const namespace = value("TABLE_NAMESPACE") || (prefix === "WEB" ? "web" : "architecture-advisor");
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(namespace)) throw new AppError(503, `${prefix}_TABLE_NAMESPACE must contain 1-64 letters, digits, underscores or hyphens.`);
+  const tableCredential = value("TABLE_CREDENTIAL") || "default";
+  if (!["default", "managed-identity"].includes(tableCredential)) throw new AppError(503, `${prefix}_TABLE_CREDENTIAL must be default or managed-identity.`);
+  const managedIdentityClientId = value("TABLE_MANAGED_IDENTITY_CLIENT_ID")?.trim() || "";
+  if (managedIdentityClientId && !isGuid(managedIdentityClientId)) throw new AppError(503, `${prefix}_TABLE_MANAGED_IDENTITY_CLIENT_ID must be a GUID.`);
+  return { tableEndpoint: table.origin, tableName, tableCredential, managedIdentityClientId, namespace };
+}
 
 export function createTableClient(config) {
   const credential = config.tableCredential === "managed-identity"
