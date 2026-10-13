@@ -40,7 +40,7 @@ if (-not $PSCmdlet.ShouldProcess("$SubscriptionId/$ResourceGroup/$NamePrefix", $
 # Remove only assignments belonging to this runtime identity and this resource group.
 foreach ($identity in @($owned | Where-Object type -eq 'Microsoft.ManagedIdentity/userAssignedIdentities')) {
     $details = Invoke-AzJson -Arguments @('identity', 'show', '--ids', $identity.id, '--subscription', $SubscriptionId)
-    $roles = @(Invoke-AzJson -Arguments @('role', 'assignment', 'list', '--all', '--scope', $context.GroupId,
+    $roles = @(Invoke-AzJson -Arguments @('role', 'assignment', 'list', '--all',
         '--query', "[?principalId=='$($details.principalId)']", '--subscription', $SubscriptionId))
     foreach ($role in $roles) {
         if (-not $role.id.StartsWith("$($context.GroupId)/", [StringComparison]::OrdinalIgnoreCase)) { throw 'Refusing to delete an assignment outside the target resource group.' }

@@ -23,6 +23,12 @@ function az {
         return ($global:AdvisorScriptTestResources | ConvertTo-Json -Depth 10 -AsArray)
     }
     if ($args[0] -eq 'resource' -and $args[1] -eq 'delete') { return }
+    if ($args[0] -eq 'identity') { return '{"principalId":"synthetic-principal"}' }
+    if ($args[0] -eq 'role' -and $args[2] -eq 'list') {
+        if ('--all' -in $args -and '--scope' -in $args) { throw 'Azure CLI does not allow --all and --scope together.' }
+        return '[{"id":"/subscriptions/synthetic/resourcegroups/synthetic-rg/providers/Microsoft.Storage/storageAccounts/advisorstore/providers/Microsoft.Authorization/roleAssignments/synthetic"}]'
+    }
+    if ($args[0] -eq 'role' -and $args[2] -eq 'delete') { return }
     throw 'Unexpected CLI command in a read-only script test.'
 }
 $context = Get-DeploymentContext 'synthetic' 'synthetic-rg' 'advisor'
@@ -45,21 +51,23 @@ if (@($global:AdvisorScriptTestAzCalls | Where-Object { $_[0] -notin @('account'
 $global:AdvisorScriptTestResources = @(
     @{ id = "$($context.GroupId)/providers/Microsoft.App/containerApps/advisor-web"; name = 'advisor-web'; type = 'Microsoft.App/containerApps'; tags = @{ advisorDeployment = $context.Key } },
     @{ id = "$($context.GroupId)/providers/Microsoft.Storage/storageAccounts/advisorstore"; name = 'advisorstore'; type = 'Microsoft.Storage/storageAccounts'; tags = @{ advisorDeployment = $context.Key } },
-    @{ id = "$($context.GroupId)/providers/Microsoft.App/containerApps/unrelated"; name = 'unrelated'; type = 'Microsoft.App/containerApps'; tags = @{ advisorDeployment = 'someone-else' } }
+    @{ id = "$($context.GroupId)/providers/Microsoft.App/containerApps/unrelated"; name = 'unrelated'; type = 'Microsoft.App/containerApps'; tags = @{ advisorDeployment = 'someone-else' } },
+    @{ id = "$($context.GroupId)/providers/Microsoft.ManagedIdentity/userAssignedIdentities/advisor-runtime"; name = 'advisor-runtime'; type = 'Microsoft.ManagedIdentity/userAssignedIdentities'; tags = @{ advisorDeployment = $context.Key } }
 )
 if (Test-Path -LiteralPath $context.StatePath) { throw 'Refusing to overwrite existing synthetic test state.' }
 New-Item -ItemType Directory -Path $context.StateDirectory -Force | Out-Null
 try {
     Save-DeploymentState @{ deploymentKey = $context.Key; tenantId = $context.TenantId } $context.StatePath
     & "$PSScriptRoot\remove-azure.ps1" -SubscriptionId synthetic -ResourceGroup synthetic-rg -NamePrefix advisor -ConfirmResourceGroup synthetic-rg
-    $deletes = @($global:AdvisorScriptTestAzCalls | Where-Object { $_[1] -eq 'delete' })
-    if ($deletes.Count -ne 1 -or $deletes[0][3] -ne $global:AdvisorScriptTestResources[0].id) {
+    $deletes = @($global:AdvisorScriptTestAzCalls | Where-Object { $_[0] -eq 'resource' -and $_[1] -eq 'delete' })
+    if ($deletes.Count -ne 2 -or $deletes[0][3] -ne $global:AdvisorScriptTestResources[0].id -or $deletes[1][3] -ne $global:AdvisorScriptTestResources[3].id) {
         throw 'Default teardown did not preserve data and unrelated resources.'
     }
+    if (@($global:AdvisorScriptTestAzCalls | Where-Object { $_[0] -eq 'role' -and $_[2] -eq 'delete' }).Count -ne 1) { throw 'Runtime role assignment was not removed.' }
     $global:AdvisorScriptTestAzCalls = @()
     & "$PSScriptRoot\remove-azure.ps1" -SubscriptionId synthetic -ResourceGroup synthetic-rg -NamePrefix advisor -ConfirmResourceGroup synthetic-rg -DeleteData
-    $deletes = @($global:AdvisorScriptTestAzCalls | Where-Object { $_[1] -eq 'delete' })
-    if ($deletes.Count -ne 2 -or $deletes[1][3] -ne $global:AdvisorScriptTestResources[1].id) {
+    $deletes = @($global:AdvisorScriptTestAzCalls | Where-Object { $_[0] -eq 'resource' -and $_[1] -eq 'delete' })
+    if ($deletes.Count -ne 3 -or $deletes[2][3] -ne $global:AdvisorScriptTestResources[1].id) {
         throw 'Explicit data deletion selected unexpected resources.'
     }
 } finally {

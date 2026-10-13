@@ -122,6 +122,23 @@ test("Table startup does not create a table or swallow permissions/missing-table
       async getEntity() { throw statusError(status, code); },
       createEntity() { assert.fail("Do not initialize on a missing table or failed read."); },
     });
+
     await assert.rejects(usage.connect(), (error) => error.status === 503);
   }
+});
+
+test("Table startup recognizes service error codes from Azure OData bodies without error headers", async () => {
+  const table = fakeTable();
+  const get = table.getEntity;
+  table.getEntity = async (...args) => {
+    try { return await get(...args); } catch (error) {
+      error.details = { odataError: { code: error.details.errorCode } };
+      throw error;
+    }
+  };
+  const usage = store(table);
+  await usage.connect();
+  assert.equal(await usage.total(), 0);
+  await usage.admit();
+  assert.equal(await usage.total(), 1);
 });

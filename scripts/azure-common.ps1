@@ -60,6 +60,32 @@ function Save-DeploymentState {
     Move-Item -LiteralPath $temporary -Destination $Path -Force
 }
 
+function Wait-AdvisorEndpoints {
+    param([string]$WebUrl, [string]$McpUrl)
+    $deadline = [DateTime]::UtcNow.AddMinutes(5)
+    Write-Host 'Waiting for public web routes, Table-backed status and protected MCP ingress...'
+    do {
+        try {
+            foreach ($path in @('/', '/advisor')) {
+                $page = Invoke-WebRequest "$WebUrl$path" -TimeoutSec 20
+                if ($page.StatusCode -ne 200) { throw 'Web page is not ready.' }
+            }
+            $status = Invoke-RestMethod "$WebUrl/api/advisor/status" -TimeoutSec 20
+            if ($null -eq $status.totalSubmissions) { throw 'Table-backed status is not ready.' }
+            $mcpOrigin = ([uri]$McpUrl).GetLeftPart([UriPartial]::Authority)
+            $metadata = Invoke-RestMethod "$mcpOrigin/.well-known/oauth-protected-resource/mcp" -TimeoutSec 20
+            if ($metadata.resource -ne $McpUrl) { throw 'MCP discovery has an unexpected resource URL.' }
+            $protected = Invoke-WebRequest $McpUrl -SkipHttpErrorCheck -TimeoutSec 20
+            if ($protected.StatusCode -ne 401 -or -not $protected.Headers['WWW-Authenticate']) { throw 'MCP must reject unauthenticated requests.' }
+            return
+        } catch {
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'Azure resources were deployed, but endpoint checks did not pass within five minutes. Inspect Container Apps console/system logs; no model smoke requests were sent.' }
+            Write-Warning 'Endpoints are not ready yet; retrying read-only checks in 15 seconds.'
+            Start-Sleep -Seconds 15
+        }
+    } while ($true)
+}
+
 function Invoke-AdvisorDeployment {
     param($Context, [string]$Name, [string]$TemplatePath, [hashtable]$Parameters)
     $templateText = & az bicep build --file $TemplatePath --stdout --only-show-errors

@@ -6,7 +6,7 @@ import { isGuid } from "./mcp-auth.mjs";
 
 export const TABLE_CLIENT_OPTIONS = { retryOptions: { maxRetries: 0 } };
 
-const storageErrorCode = (error) => error.details?.errorCode ?? error.code;
+const storageErrorCode = (error) => error.details?.errorCode ?? error.details?.odataError?.code ?? error.code;
 
 export function readTableConfig(settings, prefix = "MCP") {
   const value = (name) => settings[`${prefix}_${name}`];
@@ -60,7 +60,10 @@ export function createMcpUsage(config, client = createTableClient(config), {
       return await work();
     } catch (error) {
       if (error instanceof AppError) throw error;
-      console.error("MCP Table usage storage unavailable.");
+      const code = storageErrorCode(error);
+      const safeCode = typeof code === "string" && /^[A-Za-z0-9_.]{1,64}$/.test(code) ? code : "Unknown";
+      const status = Number.isInteger(error.statusCode) ? error.statusCode : "unknown";
+      console.error(`Table usage storage unavailable (status=${status}, code=${safeCode}).`);
       throw new AppError(503, "Shared Table usage storage is unavailable. No provider request was started. Check storage access and configuration.");
     }
   }

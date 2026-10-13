@@ -81,6 +81,12 @@ the foundation, builds/pushes uniquely tagged web/MCP images, then deploys the
 apps with exact generated HTTPS origins. An unsuccessful deployment stops with
 an error; fix it and rerun. It does not automatically roll back or delete
 partially created resources.
+Registry pushes retry the same uniquely tagged image up to three times to
+handle transient registry failures; this does not replay model requests.
+Before reporting success, the script waits for both web routes, Table-backed
+status, MCP discovery, and unauthenticated MCP rejection. These checks never
+send prompts or verify an authorized client's consent flow. Failed endpoint
+checks return an error without deleting the deployed resources.
 
 The script prints browser, `/advisor`, and `/mcp` URLs plus the API client ID and
 scope. The public demo paths preserve the local UI. Local `npm start` still

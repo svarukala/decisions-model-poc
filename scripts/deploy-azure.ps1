@@ -97,8 +97,13 @@ try {
         $image = "$($infra.registryServer.value)/advisor-${kind}:$imageTag"
         & docker build --quiet --platform linux/amd64 --file "Dockerfile.$kind" --tag $image .
         if ($LASTEXITCODE -ne 0) { throw "Building $kind failed." }
-        & docker push --quiet $image
-        if ($LASTEXITCODE -ne 0) { throw "Pushing $kind failed." }
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            & docker push --quiet $image
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw "Pushing $kind failed after three attempts." }
+            Write-Warning "Registry push failed; retrying the same immutable image ($attempt/3)."
+            Start-Sleep -Seconds (10 * $attempt)
+        }
     }
     Write-Host 'Deploying web and MCP applications...'
     $apps = Invoke-AdvisorDeployment $context "$NamePrefix-apps" (Join-Path $context.Root 'infra\apps.bicep') @{
@@ -113,6 +118,7 @@ try {
     $state.applications = $apps | ConvertTo-Json -Depth 20 | ConvertFrom-Json -AsHashtable
     $state.imageTag = $imageTag
     Save-DeploymentState $state $context.StatePath
+    Wait-AdvisorEndpoints $apps.webUrl.value $apps.mcpUrl.value
     Write-Host "Public browser demos: $($apps.webUrl.value)"
     Write-Host "Architecture advisor: $($apps.webUrl.value)/advisor"
     Write-Host "Entra-protected MCP: $($apps.mcpUrl.value)"
