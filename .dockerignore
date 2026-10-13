@@ -1,0 +1,7 @@
+node_modules
+.git
+.env
+.env.*
+*.sqlite*
+prompt-history.jsonl
+*.log

@@ -8,6 +8,18 @@ The second demo, **Microsoft Agent Architecture Advisor** at `/advisor`, compare
 real Jev and Microsoft-Decision-1 decisions for a development scenario.
 The original Chat/Cowork router remains at `/`.
 
+## Shared MCP service
+
+The architecture advisor is also available as an **API-key-authenticated,
+stateless Streamable HTTP MCP server**, separate from the web demo. It exposes
+the architecture catalog, readiness/aggregate usage, and dual-model advice.
+Redis shares the rate limit and MCP submission count across replicas.
+
+See [MCP setup, client configuration and scalable hosting](docs/mcp.md).
+Run `npm run start:mcp` after configuring Redis and `MCP_API_KEYS`.
+The default MCP endpoint is `http://127.0.0.1:3002/mcp`; shared deployments
+require HTTPS ingress. MCP usage is separate from the web demo's SQLite count.
+
 ## Run
 
 Requires Node.js 24 or later and a TypeSafe API key with Jev access.

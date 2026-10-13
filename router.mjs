@@ -30,13 +30,17 @@ export function parsePublicOrigin(value) {
   return url.origin;
 }
 
-export async function readConfig(env = process.env, file = new URL(".env", import.meta.url)) {
-  let local = {};
+export async function readLocalEnv(file = new URL(".env", import.meta.url)) {
   try {
-    local = parseEnv(await readFile(file, "utf8"));
+    return parseEnv(await readFile(file, "utf8"));
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
+    return {};
   }
+}
+
+export async function readConfig(env = process.env, file = new URL(".env", import.meta.url)) {
+  const local = await readLocalEnv(file);
   return {
     apiKey: (env.TYPESAFE_API_KEY || local.TYPESAFE_API_KEY || "").trim(),
     model: (env.TYPESAFE_MODEL || local.TYPESAFE_MODEL || DEFAULT_MODEL).trim(),
