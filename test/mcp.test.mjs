@@ -6,11 +6,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { readMcpConfig, createMcpHttpServer } from "../mcp-server.mjs";
 import { CATALOG, SIGNALS, compareArchitectures } from "../advisor.mjs";
 import { AppError } from "../router.mjs";
+import { createEntraAuthenticator } from "../mcp-auth.mjs";
+import { environment, jwks, token } from "./fixtures/entra.mjs";
 
-const KEY = "synthetic_client_key_0123456789_abcdef";
-const NEXT_KEY = "synthetic_rotation_key_0123456789_abcdef";
+const KEY = await token();
 const headers = { Authorization: `Bearer ${KEY}`, Accept: "application/json, text/event-stream", "Content-Type": "application/json" };
-const defaults = { MCP_API_KEYS: KEY, MCP_REDIS_URL: "redis://127.0.0.1:6379" };
+const defaults = environment;
 const missingEnv = new URL("nonexistent.env", import.meta.url);
 function fixture() {
   return {
@@ -29,10 +30,11 @@ function memoryUsage() {
     async total() { return count; }, close() {},
   };
 }
-async function withServer(t, overrides = {}, environment = {}) {
+async function withServer(t, overrides = {}, settings = {}) {
   const usage = overrides.usage || memoryUsage();
+  const config = await readMcpConfig({ ...defaults, ...settings }, missingEnv);
   const server = createMcpHttpServer({
-    config: await readMcpConfig({ ...defaults, ...environment }, missingEnv),
+    config, authenticate: createEntraAuthenticator(config.entra, jwks),
     usage, getConfig: async () => ({}),
     advise: (input, config) => compareArchitectures(input, config, { jev: async () => fixture(), decision: async () => fixture() }),
     ...overrides,
@@ -52,16 +54,21 @@ function post(url, body, overrides = {}) {
   return fetch(`${url}/mcp`, { method: "POST", headers: { ...headers, ...overrides }, body: JSON.stringify(body) });
 }
 
-test("MCP config fails closed for weak keys, bad Redis/origin and unsafe limits", async () => {
+test("MCP config requires Entra and Table settings and validates origin/limits", async () => {
   for (const override of [
-    { MCP_API_KEYS: "" }, { MCP_API_KEYS: "short" }, { MCP_API_KEYS: `${KEY},` },
-    { MCP_REDIS_URL: "" }, { MCP_REDIS_URL: "https://redis.example" },
+    { MCP_ENTRA_TENANT_ID: "" }, { MCP_ENTRA_CLIENT_ID: "" }, { MCP_ENTRA_TENANT_ID: "common" },
+    { MCP_TABLE_ENDPOINT: "" }, { MCP_TABLE_ENDPOINT: "https://untrusted.example" },
+    { MCP_TABLE_ENDPOINT: "https://synthetic.table.core.windows.net?sig=secret" },
+    { MCP_TABLE_NAME: "bad-name" }, { MCP_TABLE_CREDENTIAL: "api-key" },
+    { MCP_TABLE_MANAGED_IDENTITY_CLIENT_ID: "bad" },
     { MCP_HOST: "0.0.0.0" }, { MCP_PUBLIC_ORIGIN: "http://example.org" },
-    { MCP_REDIS_NAMESPACE: "bad{namespace}" }, { MCP_MAX_CONCURRENT: "0" },
+    { MCP_TABLE_NAMESPACE: "bad{namespace}" }, { MCP_MAX_CONCURRENT: "0" },
     { MCP_RATE_LIMIT: "NaN" }, { MCP_PORT: "70000" },
   ]) await assert.rejects(readMcpConfig({ ...defaults, ...override }, missingEnv));
-  const config = await readMcpConfig({ ...defaults, MCP_API_KEYS: `${KEY},${NEXT_KEY}` }, missingEnv);
-  assert.equal(config.apiKeyHashes.length, 2);
+  const config = await readMcpConfig(defaults, missingEnv);
+  assert.equal(config.entra.clientId, defaults.MCP_ENTRA_CLIENT_ID);
+  assert.equal(config.tableName, "AdvisorUsage");
+  assert.equal(config.apiKeyHashes, undefined);
   assert.equal(config.maxConcurrent, 8);
 });
 
@@ -87,12 +94,13 @@ test("official MCP client initializes statelessly, discovers tools/resources and
   assert.equal(status.structuredContent.scope, "mcp");
 });
 
-test("MCP auth covers initialization, tools, readiness, and GET/DELETE with overlapping rotation keys", async (t) => {
-  const { url, usage } = await withServer(t, {}, { MCP_API_KEYS: `${KEY},${NEXT_KEY}` });
+test("MCP Entra auth covers initialization, tools, readiness, and GET/DELETE", async (t) => {
+  const { url, usage } = await withServer(t);
   for (const authorization of ["", "Basic abc", "Bearer short", `Bearer ${"x".repeat(40)}`]) {
     const response = await post(url, { jsonrpc: "2.0", id: 1, method: "tools/list" }, { Authorization: authorization });
     assert.equal(response.status, 401);
     assert.match(response.headers.get("www-authenticate"), /Bearer/);
+    assert.match(response.headers.get("www-authenticate"), /resource_metadata=/);
     assert.doesNotMatch(await response.text(), new RegExp(KEY));
   }
   assert.equal((await fetch(`${url}/healthz`)).status, 200);
@@ -101,7 +109,23 @@ test("MCP auth covers initialization, tools, readiness, and GET/DELETE with over
   for (const method of ["GET", "DELETE", "OPTIONS"]) {
     assert.equal((await fetch(`${url}/mcp`, { method, headers })).status, 405);
   }
-  await connect(t, url, NEXT_KEY);
+  const forbidden = await post(url, {}, { Authorization: `Bearer ${await token({ scp: "Other.Scope" })}` });
+  assert.equal(forbidden.status, 403);
+  assert.match(forbidden.headers.get("www-authenticate"), /insufficient_scope/);
+  assert.equal(await usage.total(), 0);
+});
+
+test("MCP publishes unauthenticated resource metadata with a pinned tenant and canonical resource", async (t) => {
+  const { url, usage } = await withServer(t, {}, { MCP_PUBLIC_ORIGIN: "https://advisor.example.test" });
+  for (const path of ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) {
+    const response = await fetch(url + path);
+    assert.equal(response.status, 200);
+    const metadata = await response.json();
+    assert.equal(metadata.resource, "https://advisor.example.test/mcp");
+    assert.deepEqual(metadata.authorization_servers, [`https://login.microsoftonline.com/${defaults.MCP_ENTRA_TENANT_ID}/v2.0`]);
+    assert.deepEqual(metadata.scopes_supported, [`api://${defaults.MCP_ENTRA_CLIENT_ID}/Advisor.Invoke`]);
+    assert.doesNotMatch(JSON.stringify(metadata), /table.core|apiKeys/);
+  }
   assert.equal(await usage.total(), 0);
 });
 
@@ -135,7 +159,7 @@ test("MCP schema validation precedes admission and provider calls", async (t) =>
   assert.equal(await usage.total(), 0);
 });
 
-test("MCP bounds concurrent billed calls before Redis admission", async (t) => {
+test("MCP bounds concurrent billed calls before Table admission", async (t) => {
   let begin;
   let finish;
   const started = new Promise((resolve) => { begin = resolve; });

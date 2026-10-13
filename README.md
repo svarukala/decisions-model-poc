@@ -10,13 +10,14 @@ The original Chat/Cowork router remains at `/`.
 
 ## Shared MCP service
 
-The architecture advisor is also available as an **API-key-authenticated,
+The architecture advisor is also available as a **Microsoft Entra-authenticated,
 stateless Streamable HTTP MCP server**, separate from the web demo. It exposes
 the architecture catalog, readiness/aggregate usage, and dual-model advice.
-Redis shares the rate limit and MCP submission count across replicas.
+Azure Table Storage shares the rate limit and MCP submission count across replicas,
+using managed identity in Azure. Redis and shared MCP API keys are no longer used.
 
 See [MCP setup, client configuration and scalable hosting](docs/mcp.md).
-Run `npm run start:mcp` after configuring Redis and `MCP_API_KEYS`.
+Run `npm run start:mcp` after configuring your Entra API registration and Table Storage.
 The default MCP endpoint is `http://127.0.0.1:3002/mcp`; shared deployments
 require HTTPS ingress. MCP usage is separate from the web demo's SQLite count.
 

@@ -2,7 +2,7 @@ FROM node:24-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
-COPY router.mjs advisor.mjs mcp-server.mjs mcp-usage.mjs ./
+COPY router.mjs advisor.mjs mcp-server.mjs mcp-usage.mjs mcp-auth.mjs ./
 ENV NODE_ENV=production MCP_HOST=0.0.0.0 MCP_PORT=3002
 USER node
 EXPOSE 3002

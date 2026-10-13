@@ -1,5 +1,4 @@
 import { createServer } from "node:http";
-import { createHash, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -7,8 +6,8 @@ import { z } from "zod";
 import { AppError, parsePublicOrigin, readConfig, readLocalEnv } from "./router.mjs";
 import { ADVISOR_REFERENCE, CATALOG, RUBRIC_VERSION, SIGNALS, advisorStatus, compareArchitectures } from "./advisor.mjs";
 import { createMcpUsage } from "./mcp-usage.mjs";
+import { authChallenge, createEntraAuthenticator, isGuid, protectedResourceMetadata, readEntraConfig } from "./mcp-auth.mjs";
 
-const hash = (value) => createHash("sha256").update(value).digest();
 function integer(value, fallback, maximum, label) {
   const parsed = Number(value ?? fallback);
   if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) throw new AppError(503, `${label} must be an integer from 1 to ${maximum}.`);
@@ -17,25 +16,31 @@ function integer(value, fallback, maximum, label) {
 
 export async function readMcpConfig(env = process.env, file) {
   const settings = { ...await readLocalEnv(file), ...env };
-  const apiKeys = (settings.MCP_API_KEYS || "").split(",").map((key) => key.trim());
-  if (!apiKeys.length || apiKeys.some((key) => !/^[A-Za-z0-9_-]{32,256}$/.test(key))) {
-    throw new AppError(503, "Set MCP_API_KEYS to comma-separated random API keys, each 32-256 URL-safe characters. Never reuse a provider key.");
-  }
+  const entra = readEntraConfig(settings);
   const publicOrigin = parsePublicOrigin(settings.MCP_PUBLIC_ORIGIN || "");
   const host = settings.MCP_HOST || "127.0.0.1";
   if (!["127.0.0.1", "0.0.0.0"].includes(host)) throw new AppError(503, "MCP_HOST must be 127.0.0.1 or 0.0.0.0.");
   if (host === "0.0.0.0" && !publicOrigin) throw new AppError(503, "Set MCP_PUBLIC_ORIGIN to the HTTPS gateway origin before binding MCP to all interfaces.");
-  let redis;
-  try { redis = new URL(settings.MCP_REDIS_URL); } catch { throw new AppError(503, "Set MCP_REDIS_URL to a Redis connection URL."); }
-  if (!["redis:", "rediss:"].includes(redis.protocol) || redis.hash) throw new AppError(503, "MCP_REDIS_URL must use redis:// or rediss://.");
-  const namespace = settings.MCP_REDIS_NAMESPACE || "architecture-advisor";
-  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(namespace)) throw new AppError(503, "MCP_REDIS_NAMESPACE must contain 1-64 letters, digits, underscores or hyphens.");
+  let table;
+  try { table = new URL(settings.MCP_TABLE_ENDPOINT); } catch { throw new AppError(503, "Set MCP_TABLE_ENDPOINT to your Azure Storage Table HTTPS endpoint."); }
+  if (table.protocol !== "https:" || !/^[a-z0-9]{3,24}\.table\.core\.windows\.net$/.test(table.hostname) ||
+    table.port || table.pathname !== "/" || table.username || table.password || table.search || table.hash) {
+    throw new AppError(503, "MCP_TABLE_ENDPOINT must be https://ACCOUNT.table.core.windows.net without paths, keys or SAS tokens.");
+  }
+  const tableName = settings.MCP_TABLE_NAME || "AdvisorUsage";
+  if (!/^[A-Za-z][A-Za-z0-9]{2,62}$/.test(tableName)) throw new AppError(503, "MCP_TABLE_NAME must be 3-63 alphanumeric characters starting with a letter.");
+  const namespace = settings.MCP_TABLE_NAMESPACE || "architecture-advisor";
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(namespace)) throw new AppError(503, "MCP_TABLE_NAMESPACE must contain 1-64 letters, digits, underscores or hyphens.");
+  const tableCredential = settings.MCP_TABLE_CREDENTIAL || "default";
+  if (!["default", "managed-identity"].includes(tableCredential)) throw new AppError(503, "MCP_TABLE_CREDENTIAL must be default or managed-identity.");
+  const managedIdentityClientId = settings.MCP_TABLE_MANAGED_IDENTITY_CLIENT_ID?.trim() || "";
+  if (managedIdentityClientId && !isGuid(managedIdentityClientId)) throw new AppError(503, "MCP_TABLE_MANAGED_IDENTITY_CLIENT_ID must be a GUID.");
   return {
-    host, publicOrigin, apiKeyHashes: apiKeys.map(hash),
+    host, publicOrigin, entra,
     port: integer(settings.MCP_PORT, 3002, 65535, "MCP_PORT"),
     maxConcurrent: integer(settings.MCP_MAX_CONCURRENT, 8, 128, "MCP_MAX_CONCURRENT"),
     rateLimit: integer(settings.MCP_RATE_LIMIT, 60, 100000, "MCP_RATE_LIMIT"),
-    redisUrl: redis.href, namespace,
+    tableEndpoint: table.origin, tableName, tableCredential, managedIdentityClientId, namespace,
   };
 }
 
@@ -72,7 +77,7 @@ function toolError(error) {
 }
 
 export function createAdvisorMcp({ getConfig, usage, advise, runAdvice }) {
-  const server = new McpServer({ name: "microsoft-agent-architecture-advisor", version: "1.0.0" });
+  const server = new McpServer({ name: "microsoft-agent-architecture-advisor", version: "2.0.0" });
   server.registerTool("get_architecture_catalog", {
     title: "Get Microsoft agent architecture options",
     description: "Read supported development approaches, prerequisites, source documentation, capability signals and rubric version. No model calls or charges.",
@@ -118,7 +123,6 @@ export function createAdvisorMcp({ getConfig, usage, advise, runAdvice }) {
 
 function sendError(res, status, message) {
   if (res.headersSent || res.destroyed) return;
-  if (status === 401) res.setHeader("WWW-Authenticate", 'Bearer realm="architecture-advisor"');
   if (status === 429) res.setHeader("Retry-After", "60");
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ jsonrpc: "2.0", error: { code: -32000, message }, id: null }));
@@ -141,7 +145,7 @@ async function readBody(req) {
   }
 }
 
-export function createMcpHttpServer({ config, usage, getConfig = readConfig, advise = compareArchitectures }) {
+export function createMcpHttpServer({ config, usage, getConfig = readConfig, advise = compareArchitectures, authenticate = createEntraAuthenticator(config.entra) }) {
   let activeAdvice = 0;
   let activeHttp = 0;
   let draining = false;
@@ -155,6 +159,7 @@ export function createMcpHttpServer({ config, usage, getConfig = readConfig, adv
     res.setHeader("X-Content-Type-Options", "nosniff");
     let mcp;
     let reserved = false;
+    const canonicalOrigin = config.publicOrigin || `http://127.0.0.1:${req.socket.localPort}`;
     try {
       const localPort = req.socket.localPort;
       const origins = new Map([
@@ -167,20 +172,21 @@ export function createMcpHttpServer({ config, usage, getConfig = readConfig, adv
         throw new AppError(403, "Host or Origin is not allowed.");
       }
       const url = new URL(req.url, origin);
-      if (url.search) throw new AppError(400, "Query parameters are not supported. Supply the API key in the Authorization header.");
+      if (url.search) throw new AppError(400, "Query parameters are not supported. Supply the access token in the Authorization header.");
       if (req.method === "GET" && url.pathname === "/healthz") {
         res.writeHead(draining ? 503 : 200, { "Content-Type": "application/json" });
         return res.end(JSON.stringify({ status: draining ? "draining" : "ok" }));
       }
+      if (req.method === "GET" && ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname)) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        return res.end(JSON.stringify(protectedResourceMetadata(config.entra, canonicalOrigin)));
+      }
       if (!["/mcp", "/readyz"].includes(url.pathname)) throw new AppError(404, "Not found.");
-      const bearer = /^Bearer ([A-Za-z0-9_-]{32,256})$/i.exec(req.headers.authorization || "");
-      const suppliedHash = hash(bearer?.[1] || "");
-      const authenticated = config.apiKeyHashes.reduce((matches, expected) => matches | Number(timingSafeEqual(expected, suppliedHash)), 0);
-      if (!bearer || !authenticated) throw new AppError(401, "A valid MCP API key is required in Authorization: Bearer <key>.");
       if (draining) throw new AppError(503, "This replica is shutting down.");
       if (activeHttp >= config.maxConcurrent + 16) throw new AppError(429, "This replica is busy. Wait before retrying.");
       activeHttp++;
       reserved = true;
+      await authenticate(req.headers.authorization);
       if (url.pathname === "/readyz" && req.method === "GET") {
         await usage.ready();
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -200,6 +206,9 @@ export function createMcpHttpServer({ config, usage, getConfig = readConfig, adv
       await transport.handleRequest(req, res, body);
     } catch (error) {
       if (!(error instanceof AppError)) console.error("MCP HTTP request failed unexpectedly.");
+      if ([401, 403].includes(error.status) && !res.headersSent && !res.destroyed) {
+        res.setHeader("WWW-Authenticate", authChallenge(config.entra, canonicalOrigin, error.status));
+      }
       sendError(res, error instanceof AppError ? error.status : 500, error instanceof AppError ? error.message : "Unexpected MCP server error.");
     } finally {
       if (mcp) {
@@ -225,7 +234,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const server = createMcpHttpServer({ config, usage });
     server.on("error", () => { console.error("MCP listener failed. Check the configured bind address and port."); usage.close(); process.exitCode = 1; });
     server.listen(config.port, config.host, () => {
-      console.log(`Architecture MCP listening on port ${config.port}; API-key authentication required.`);
+      console.log(`Architecture MCP listening on port ${config.port}; Entra access tokens required.`);
       console.log(`Shared limit: ${config.rateLimit} comparisons/minute; concurrency per replica: ${config.maxConcurrent}.`);
     });
     let closing = false;
@@ -241,7 +250,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.once("SIGTERM", shutdown);
   } catch (error) {
     // Configuration errors are authored messages, never external connection details.
-    console.error(error instanceof AppError ? error.message : "MCP startup failed. Check MCP_API_KEYS, MCP_REDIS_URL, bind/origin and numeric limits.");
+    console.error(error instanceof AppError ? error.message : "MCP startup failed. Check Entra, Table Storage, bind/origin and numeric settings.");
     usage?.close();
     process.exitCode = 1;
   }
